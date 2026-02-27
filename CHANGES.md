@@ -148,25 +148,68 @@ JVM bug is resolved upstream.
 
 ---
 
-### ArrayContentValidator fast path (Phase 2) — planned
+### ArrayContentValidator fast path (Phase 2)
 
 **File:** `src/main/java/gov/nasa/pds/tools/validate/content/array/ArrayContentValidator.java`
 
+**Benchmark results** (RHEL 8, Java 17, G96 5280×5280 SignedMSB2 arch images,
+pre-funpacked, 2 trials each, all products PASS 0 errors):
+
+| Batch size | Original ms/product | CSS ms/product | Speedup |
+|------------|---------------------|----------------|---------|
+| 10 products  | 1,998 ms/prod | 602 ms/prod  | **3.3×** |
+| 30 products  | 1,693 ms/prod | 324 ms/prod  | **5.2×** |
+| 100 products | 1,517 ms/prod | 202 ms/prod  | **7.5×** |
+
+Per-product content-validation speedup (startup amortised out): ~10×.
+
+**Why the original loop was redundant for signed integers:**
+
 For CSS FITS images (`SignedMSB2`, no `Special_Constants`, no `Object_Statistics`),
-the existing per-pixel loop calls `rangeChecker.contains(value)` 27,878,400 times per
-image.  The check is tautological: the `(short)` cast at line 200 already constrains
-the value to `[Short.MIN_VALUE, Short.MAX_VALUE]`, which is exactly the range being
-checked.
+the existing per-pixel loop called `rangeChecker.contains(value)` 27,878,400 times per
+image.  The check was tautological: the `(short)` cast at line 200 of `validatePosition()`
+already constrains the value to `[Short.MIN_VALUE, Short.MAX_VALUE]`, which is exactly
+the range `SignedMSB2_RANGE` spans.  The same argument applies to all 7 signed integer
+types — each Java primitive cast is the only narrowing that can occur.
 
-Planned replacement: a single `FileChannel.read()` verifying file size and readability
-without iterating pixels.  Expected speedup ~6× per FITS image.
+The only real work the loop performed for these types was confirming the data file
+contained enough bytes for all N pixels without premature EOF.
 
-Fast path activates only when:
-1. Data type is one of the 7 signed integer types (SignedByte … SignedMSB8)
-2. `array.getSpecialConstants()` is null
-3. `array.getObjectStatistics()` is null
+**What the fast path does:**
 
-All other data falls through to the original unmodified loop.
+Inserted at the top of `validate()`, before `arrayObject.open()`:
+
+1. Determine the data type from the label.  If not a signed integer, fall through.
+2. Check `array.getSpecialConstants() == null` and `array.getObjectStatistics() == null`.
+   If either is non-null, fall through.
+3. Compute `expectedBytes = totalElements × (bits/8)`.
+4. `Files.size(Paths.get(dataFile.toURI()))` — one `stat()` syscall.
+5. If `fileSize < offset + expectedBytes`, report `ARRAY_DATA_FILE_READ_ERROR`.
+6. Otherwise return immediately — file is large enough and all pixels are in range.
+
+Any exception (URI error, I/O error, unknown type) causes a fall-through to the
+original pixel-by-pixel loop, which reports the error normally.
+
+**Fast path conditions (all must be true):**
+1. Data type is one of the 7 signed integer types (`SignedByte` … `SignedMSB8`)
+2. `array.getSpecialConstants()` is `null`
+3. `array.getObjectStatistics()` is `null`
+
+All other array types (unsigned, float) fall through to the original loop unchanged.
+New imports: `java.nio.file.Files`, `java.nio.file.Paths` (Java 7+, compatible with
+the Java 11 minimum requirement).
+
+**Correctness argument:**
+
+The fast path reports identical errors to the original loop because:
+- For signed integer types with no Special_Constants, `rangeChecker.contains(value)`
+  is always `true` → the original loop never reports a range error for these types.
+- The original loop's only detectable failure mode is a read error (premature EOF),
+  which is exactly what the file-size check detects.
+- `Object_Statistics` min/max checks are bypassed when that field is null (as it is
+  for all CSS data), so no `checkObjectStats()` calls are skipped.
+
+The change is conservative: any deviation from these conditions uses the original loop.
 
 ---
 

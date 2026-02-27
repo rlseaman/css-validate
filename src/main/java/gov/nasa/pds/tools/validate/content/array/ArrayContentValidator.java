@@ -18,6 +18,8 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import org.apache.commons.lang3.Range;
 import org.apache.commons.lang3.math.NumberUtils;
@@ -120,6 +122,52 @@ public class ArrayContentValidator {
     }
 
     LOG.debug("validate:tableNameReportStr {}", tableNameReportStr);
+
+    // CSS-LOCAL: Fast path for signed integer arrays with no Special_Constants or
+    // Object_Statistics.  For these types the per-pixel rangeChecker.contains(value)
+    // call in validatePosition() is tautological: the Java primitive cast already
+    // constrains the value to within the type's range (e.g. "(short) getInt(pos)"
+    // always yields a value in [Short.MIN_VALUE, Short.MAX_VALUE]).  The only real
+    // work the original loop performs for these types is confirming the data file
+    // contains enough bytes to read all N pixels without a premature EOF.  We make
+    // that check in O(1) with a single file-size stat, then return immediately.
+    //
+    // Falls through to the original pixel-by-pixel loop when:
+    //   - the data type is not a signed integer (unsigned, float types use the loop)
+    //   - Special_Constants or Object_Statistics are present in the label
+    //   - dataFile is not a local path (URI syntax error)
+    //   - the file-size stat fails for any reason (original loop reports the error)
+    try {
+      NumericDataType fastPathType =
+          Enum.valueOf(NumericDataType.class, array.getElementArray().getDataType());
+      if (isSignedIntegerType(fastPathType)
+          && array.getSpecialConstants() == null
+          && array.getObjectStatistics() == null) {
+        long totalElements = 1;
+        for (int dim : dimensions) {
+          totalElements *= dim;
+        }
+        long expectedBytes = totalElements * (fastPathType.getBits() / 8);
+        long offset = arrayObject.getOffset();
+        long fileSize = Files.size(Paths.get(dataFile.toURI()));
+        if (fileSize < offset + expectedBytes) {
+          listener.addProblem(new ArrayContentProblem(
+              new ProblemDefinition(ExceptionType.ERROR,
+                  ProblemType.ARRAY_DATA_FILE_READ_ERROR,
+                  "File size (" + fileSize + " bytes) is smaller than expected array"
+                      + " region: offset=" + offset + " + data=" + expectedBytes
+                      + " bytes (=" + (offset + expectedBytes) + " total)"),
+              dataFile, label, arrayIndex, null));
+        }
+        // Signed integer pixels are unconditionally within range; file is large enough.
+        return;
+      }
+    } catch (IllegalArgumentException e) {
+      // Unknown data type — fall through to original loop.
+    } catch (Exception e) {
+      // URI error, I/O error, etc. — fall through; original loop will report it.
+    }
+    // END CSS-LOCAL fast path
 
     try {
       arrayObject.open();
@@ -562,5 +610,20 @@ public class ArrayContentValidator {
 
   public void setSpotCheckData(int value) {
     this.spotCheckData = value;
+  }
+
+  // CSS-LOCAL: Returns true for the 7 signed integer types whose value range is exactly
+  // representable as a Java primitive after the cast in validatePosition(), making the
+  // rangeChecker.contains(value) call a tautology and enabling the O(1) fast path.
+  private static boolean isSignedIntegerType(NumericDataType dataType) {
+    switch (dataType) {
+      case SignedByte:
+      case SignedLSB2: case SignedMSB2:
+      case SignedLSB4: case SignedMSB4:
+      case SignedLSB8: case SignedMSB8:
+        return true;
+      default:
+        return false;
+    }
   }
 }
