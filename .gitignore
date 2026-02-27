@@ -83,3 +83,6 @@ validate_stack_traces*
 
 # Validate output
 *.csv
+# AppCDS generated files — machine and JVM-specific, do not commit
+validate.jsa
+validate.classlist

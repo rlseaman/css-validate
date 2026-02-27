@@ -61,6 +61,19 @@ fi
 # Finds the jar file in LIB_DIR and sets it to VALIDATE_JAR.
 VALIDATE_JAR=`ls ${LIB_DIR}/validate-*.jar`
 
+# CSS-LOCAL: AppCDS (Application Class Data Sharing) support.
+# If validate.jsa exists alongside this distribution, the JVM memory-maps
+# pre-parsed class metadata instead of re-loading all JARs from scratch on
+# every invocation.  -Xshare:auto silently falls back to normal startup if
+# the archive is absent or stale — no error, just no speedup until rebuilt.
+# Run rebuild_appcds.sh (in the distribution root) to create or refresh it.
+APPCDS_ARCHIVE="${PARENT_DIR}/validate.jsa"
+if [ -f "${APPCDS_ARCHIVE}" ]; then
+    APPCDS_FLAGS="-XX:SharedArchiveFile=${APPCDS_ARCHIVE} -Xshare:auto"
+else
+    APPCDS_FLAGS=""
+fi
+
 # Executes Validate Tool via the executable jar file
 # Arguments are passed in to the tool via '$@'
-"${JAVA_CMD}" -Xms2048m -Xmx4096m -Dresources.home=${PARENT_DIR}/resources -Dcom.sun.xml.bind.v2.bytecode.ClassTailor.noOptimize=true -Djava.util.logging.config.file=logging.properties -jar ${VALIDATE_JAR} "$@"
+"${JAVA_CMD}" -Xms2048m -Xmx4096m ${APPCDS_FLAGS} -Dresources.home=${PARENT_DIR}/resources -Dcom.sun.xml.bind.v2.bytecode.ClassTailor.noOptimize=true -Djava.util.logging.config.file=logging.properties -jar ${VALIDATE_JAR} "$@"
