@@ -168,10 +168,37 @@ The change is conservative: any deviation from these conditions uses the origina
 
 ---
 
-### Planned additions
+### CSS fast-path integration tests
 
-- **CSS test articles** — `src/test/resources/css-testdata/`
-- **CSS unit + integration tests** — `src/test/java/`
+**Files:** `src/test/java/gov/nasa/pds/validate/ArrayContentValidatorCSSTest.java`,
+`src/test/resources/css-testdata/`
+
+**Commit:** `33f563839`
+
+Five JUnit 5 integration tests driven by `ValidateLauncher.processMain()` that
+verify every branch of the fast-path logic:
+
+| Test | Condition | Expected result |
+|------|-----------|-----------------|
+| `testFastPathValid` | SignedMSB2, file = 200 bytes | 0 errors |
+| `testFastPathTruncated` | SignedMSB2, file = 199 bytes | `ARRAY_DATA_FILE_READ_ERROR` |
+| `testFallThroughObjectStatistics` | `Object_Statistics` present | original loop, 0 errors |
+| `testFallThroughUnsignedType` | `UnsignedMSB2` type | original loop, 0 errors |
+| `testFallThroughSpecialConstants` | `Special_Constants` present | original loop, 0 errors |
+
+Test data is synthetic 10×10 zero-filled arrays (200 and 199 bytes).
+Labels use PDS4 IM 1G00; schema resolution is offline via the
+`psi-catalina` local catalog.  Context product references are present
+but not resolved (`--skip-context-validation`).
+
+Run the suite:
+
+```bash
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-<version>
+mvn test -Dtest=ArrayContentValidatorCSSTest -nsu
+```
+
+All 5 tests pass on sikhote (RHEL 8, Java 17.0.5, Maven 3.5.4).
 
 ---
 
