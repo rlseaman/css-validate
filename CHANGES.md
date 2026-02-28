@@ -65,6 +65,26 @@ locally installed versions are used.
 
 Output: `target/validate-3.2.0.jar`
 
+### Deploying the built JAR into an existing distribution
+
+The CSS-built JAR's `MANIFEST.MF` Class-Path references the two SNAPSHOT dependencies
+by their canonical Maven SNAPSHOT names (`opencsv-5.4-SNAPSHOT.jar`,
+`vicario-48.0.3-SNAPSHOT.jar`).  The pre-built distribution ships them with timestamped
+names (`opencsv-5.4-20210616.043831-1.jar`, `vicario-48.0.3-20210616.051212-1.jar`).
+
+After copying `target/validate-3.2.0.jar` into `<dist>/lib/`, create two symlinks:
+
+```bash
+cd <dist>/lib
+ln -sf opencsv-5.4-20210616.043831-1.jar  opencsv-5.4-SNAPSHOT.jar
+ln -sf vicario-48.0.3-20210616.051212-1.jar vicario-48.0.3-SNAPSHOT.jar
+```
+
+Without these symlinks, `DataDefinitionAndContentValidationRule` fails with
+`ClassNotFoundException: com.opencsv.exceptions.CsvValidationException` for all
+table-type products.  Image products (which hit the fast path before class loading)
+are unaffected, making the failure appear only at ~34% of products — the table types.
+
 ### Running the freshly built validate
 
 The distribution launcher script (`validate-3.2.0/bin/validate`) references the
