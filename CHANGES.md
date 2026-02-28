@@ -103,72 +103,7 @@ java -Xms2048m -Xmx4096m \
 
 ---
 
-### AppCDS support (Phase 1)
-
-**Files changed:**
-- `src/main/resources/bin/validate` — launcher conditionally enables AppCDS
-- `rebuild_appcds.sh` — new script to regenerate the class-data archive
-- `.gitignore` — add `validate.jsa` and `validate.classlist` (machine-specific)
-
-**What it does:**
-
-AppCDS (Application Class Data Sharing) serialises the JVM's completed class-loading
-work — parsed bytecode, verified metadata, resolved references — into a binary archive
-(`.jsa`).  On subsequent `validate` invocations the JVM memory-maps the archive instead
-of re-parsing all JAR files.  The OS can share those physical pages across parallel JVM
-processes.
-
-The launcher checks for `${PARENT_DIR}/validate.jsa` at startup:
-
-```sh
-APPCDS_ARCHIVE="${PARENT_DIR}/validate.jsa"
-if [ -f "${APPCDS_ARCHIVE}" ]; then
-    APPCDS_FLAGS="-XX:SharedArchiveFile=${APPCDS_ARCHIVE} -Xshare:auto"
-else
-    APPCDS_FLAGS=""
-fi
-```
-
-`-Xshare:auto` silently falls back to normal startup if the archive is absent or stale,
-so a missed rebuild never breaks production.
-
-**Generating the archive:**
-
-```bash
-bash rebuild_appcds.sh [distribution_dir] [catalog_path]
-```
-
-Run this once after installing validate, and again after any Java update or new
-validate deployment.  Takes < 2 minutes.
-
-**Expected gain (CSS workload):**
-
-| Scenario | AppCDS saving | Total rate | % gain |
-|----------|--------------|-----------|--------|
-| 100-prod batch, content validation | ~20 ms/product | ~1,500 ms/prod | ~1–2% |
-| 25-prod batch (4 parallel), content | ~80 ms/product | ~500 ms/prod | ~5% |
-| 100-prod batch, label-only (-D) | ~20 ms/product | ~210 ms/prod | ~10% |
-
-**Known issue — RHEL 8 / Red Hat OpenJDK 17.0.5:**
-
-`rebuild_appcds.sh` triggers a JVM crash (`SIGSEGV` in
-`SystemDictionaryShared::adjust_lambda_proxy_class_dictionary()`) specific to Red Hat's
-OpenJDK 17.0.5 build on RHEL 8.  Additional constraints on this platform:
-
-- Saxon HE (XSLT engine used for Schematron) is a signed JAR; its classes are skipped
-  during archive creation regardless of approach.
-- validate calls `System.exit()` which bypasses JVM shutdown hooks, making the
-  `-XX:ArchiveClassesAtExit` approach ineffective.
-- The default Java 17 CDS archive (`$JAVA_HOME/lib/server/classes.jsa`, 14 MB) already
-  provides JDK-level class sharing and loads automatically.
-
-The AppCDS infrastructure is correct and works on standard JDK builds.  The archive
-build is deferred until either a non-Red Hat JDK build is available on this host or the
-JVM bug is resolved upstream.
-
----
-
-### ArrayContentValidator fast path (Phase 2)
+### ArrayContentValidator fast path
 
 **File:** `src/main/java/gov/nasa/pds/tools/validate/content/array/ArrayContentValidator.java`
 
@@ -237,3 +172,15 @@ The change is conservative: any deviation from these conditions uses the origina
 
 - **CSS test articles** — `src/test/resources/css-testdata/`
 - **CSS unit + integration tests** — `src/test/java/`
+
+---
+
+## Experimental branches
+
+**`experimental/appcds`** — AppCDS (Application Class Data Sharing) launcher support
+and archive-generation script.  The implementation is correct but produces < 5%
+throughput gain on the CSS content-validation workload because Schematron compilation
+(a runtime XSLT cost) dominates JVM startup time and cannot be cached by AppCDS.
+Archive generation also crashes on Red Hat OpenJDK 17.0.5 / RHEL 8 due to a JVM bug
+in `SystemDictionaryShared::adjust_lambda_proxy_class_dictionary()`.  Deferred until
+the host is upgraded to Rocky 9 / a standard JDK build.
