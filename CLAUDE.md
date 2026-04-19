@@ -25,18 +25,19 @@ with `// CSS-LOCAL:` comments and catalogued in `CHANGES.md`.
 - Pipeline orchestration → `rlseaman/psi-catalina`
 - CSS benchmark/operational scripts → `rlseaman/CSS_PDS4_tools`
 
-## The fast path (primary CSS change — not yet implemented)
+## The fast path (primary CSS change — implemented)
 
 **File:** `src/main/java/gov/nasa/pds/tools/validate/content/array/ArrayContentValidator.java`
+**Commit:** `fa2a00e96` (fast path), `33f563839` (integration tests)
 
 For CSS FITS images (`SignedMSB2`, no `Special_Constants`, no `Object_Statistics`),
-the current per-pixel loop calls `rangeChecker.contains(value)` 27,878,400 times
-per image.  The check is a tautology: a Java `short` cast at line 200 already
+the original per-pixel loop called `rangeChecker.contains(value)` 27,878,400 times
+per image.  The check was a tautology: a Java `short` cast at line 200 already
 constrains the value to `[Short.MIN_VALUE, Short.MAX_VALUE]`, which is exactly
 the range being checked.
 
-The planned replacement: a single `FileChannel.read()` into a `ByteBuffer` of
-the expected byte count, verifying file size and readability without iterating
+The replacement: a single `FileChannel.read()` into a `ByteBuffer` of the
+expected byte count, verifying file size and readability without iterating
 pixels.  Expected speedup: ~6× per FITS image; ~24× total vs vanilla PSI.
 
 The fast path activates only when:
